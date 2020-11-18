@@ -18,5 +18,5 @@ Gem::Specification.new do |s|
   s.add_dependency('mime-types')
   s.add_dependency('rubytree', '>=0.9.3')
 
-  s.add_development_dependency('rubocop', '0.71')
+  s.add_development_dependency('rubocop', '0.73.0')
 end

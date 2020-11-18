@@ -11,12 +11,18 @@ module ReportPortal
 
         @io = config.out_stream
 
-        %i[test_case_started test_case_finished test_step_started test_step_finished test_run_finished].each do |event_name|
-          config.on_event event_name do |event|
+        {
+          test_case_started: ::Cucumber::Events::BeforeTestCase,
+          test_case_finished: ::Cucumber::Events::AfterTestCase,
+          test_step_started: ::Cucumber::Events::BeforeTestStep,
+          test_step_finished: ::Cucumber::Events::AfterTestStep,
+          test_run_finished: ::Cucumber::Events::FinishedTesting
+        }.each do |event_name, event_class|
+          config.on_event event_class do |event|
             process_message(event_name, event)
           end
         end
-        config.on_event(:test_run_finished) { finish_message_processing }
+        config.on_event(::Cucumber::Events::FinishedTesting) { finish_message_processing }
       end
 
       def puts(message)
@@ -51,7 +57,11 @@ module ReportPortal
       def finish_message_processing
         return if use_same_thread_for_reporting?
 
-        sleep 0.03 while !@queue.empty? || @queue.num_waiting.zero? # TODO: how to interrupt launch if the user aborted execution
+        start = Time.now.to_i
+        while !@queue.empty? && (start + 60) > Time.now.to_i
+          sleep 1
+        end
+
         @thread.kill
       end
 

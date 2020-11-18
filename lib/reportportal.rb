@@ -15,9 +15,19 @@ require_relative 'report_portal/http_client'
 
 module ReportPortal
   LOG_LEVELS = { error: 'ERROR', warn: 'WARN', info: 'INFO', debug: 'DEBUG', trace: 'TRACE', fatal: 'FATAL', unknown: 'UNKNOWN' }.freeze
+  LaunchInfo = Struct.new(
+    :description,
+    :id,
+    :uuid,
+    :name,
+    :ordinal,
+    :start_time,
+    :run_mode,
+    :has_retries
+  )
 
   class << self
-    attr_accessor :launch_id, :current_scenario
+    attr_accessor :launch_id, :current_scenario, :info
 
     def now
       (current_time.to_f * 1000).to_i
@@ -36,11 +46,46 @@ module ReportPortal
       end
     end
 
-    def start_launch(description, start_time = now)
-      required_data = { name: Settings.instance.launch, start_time: start_time, description:
-          description, mode: Settings.instance.launch_mode }
-      data = prepare_options(required_data, Settings.instance)
+    def start_launch(description, settings, start_time = now)
+      required_data = {
+        name: settings.launch,
+        start_time: start_time,
+        description: description,
+        mode: settings.launch_mode
+      }
+      data = prepare_options(required_data, settings)
       @launch_id = send_request(:post, 'launch', json: data)['id']
+
+      @launch_id
+    end
+
+    def launch_internal_id
+      current_launch.id
+    end
+
+    # @return [ReportPortal::TestLaunchInfo]
+    def current_launch
+      @info ||= launch_info
+      @current_launch ||= ::ReportPortal::LaunchInfo.new(
+        info['description'],
+        info['id'], # ID is a number. for example: 12796
+        info['uuid'], # uuid is a UUID => "19fb829f-1ecd-4fdb-91d5-638897f6de0c",
+        info['name'],
+        info['number'], # ordinal number
+        info['startTime'], # timestamp =>1605105165776,
+        info['mode'], # DEFAULT / DEBUG
+        info['hasRetries'] # boolean =>false
+      )
+    end
+
+    # @return [Hash]
+    def launch_info
+      response = send_request(:get, "launch?filter.eq.uuid=#{launch_id}")
+      content  = response['content']
+
+      raise("Failed to find launch with id #{launch_id}. ReportPortal response: #{response}") if content.empty?
+
+      content.first
     end
 
     def finish_launch(end_time = now)
@@ -52,8 +97,17 @@ module ReportPortal
       path = 'item'
       path += "/#{item_node.parent.content.id}" unless item_node.parent&.is_root?
       item = item_node.content
-      data = { start_time: item.start_time, name: item.name[0, 255], type: item.type.to_s, launch_id: @launch_id, description: item.description }
+      data = {
+        start_time: item.start_time,
+        name: item.name[0, 255],
+        type: item.type.to_s,
+        # launch_id: @launch_id,
+        launchUuid: @launch_id,
+        description: item.description
+      }
       data[:tags] = item.tags unless item.tags.empty?
+      data[:retry] = item.retry unless item.retry.nil?
+
       event_bus.broadcast(:prepare_start_item_request, request_data: data)
       send_request(:post, path, json: data)['id']
     end
@@ -82,7 +136,9 @@ module ReportPortal
     end
 
     def send_file(status, path_or_src, label = nil, time = now, mime_type = 'image/png')
+      # rubocop: disable Performance/StringReplacement
       str_without_nils = path_or_src.to_s.gsub("\0", '') # file? does not allow NULLs inside the string
+      # rubocop: enable Performance/StringReplacement
       if File.file?(str_without_nils)
         send_file_from_path(status, path_or_src, label, time, mime_type)
       else
@@ -125,10 +181,11 @@ module ReportPortal
 
     # needed for parallel formatter
     def item_id_of(name, parent_node)
+      # raise
       path = if parent_node.is_root? # folder without parent folder
-               "item?filter.eq.launch=#{@launch_id}&filter.eq.name=#{CGI.escape(name)}&filter.size.path=0"
+               "item?filter.eq.launchId=#{launch_internal_id}&filter.eq.name=#{name.gsub(' ', '%20')}"
              else
-               "item?filter.eq.parent=#{parent_node.content.id}&filter.eq.name=#{CGI.escape(name)}"
+               "item?filter.eq.parentId=#{parent_node.content.id}&filter.eq.name=#{name.gsub(' ', '%20')}"
              end
       data = send_request(:get, path)
       if data.key? 'content'
@@ -139,7 +196,7 @@ module ReportPortal
     # needed for parallel formatter
     def close_child_items(parent_id)
       path = if parent_id.nil?
-               "item?filter.eq.launch=#{@launch_id}&filter.size.path=0&page.page=1&page.size=100"
+               "item?filter.eq.launchId=#{launch_internal_id}&page.page=1&page.size=100"
              else
                "item?filter.eq.parent=#{parent_id}&page.page=1&page.size=100"
              end

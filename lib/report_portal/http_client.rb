@@ -1,21 +1,37 @@
 require 'http'
+require 'logger'
 
 module ReportPortal
   # @api private
   class HttpClient
+    attr_reader :http
     def initialize
+      @http_debug = false
+      @logger = Logger.new(STDOUT)
       create_client
     end
 
     def send_request(verb, path, options = {})
       path.prepend("/api/v1/#{Settings.instance.project}/")
-      path.prepend(origin) unless use_persistent?
+      path.prepend(origin) unless use_persistent? || path.include?(origin)
+
       3.times do
         begin
-          response = @http.request(verb, path, options)
+          options[:headers] = {} if options[:headers].nil?
+          options[:headers]['Accept-Charset'] = 'utf-8'
+          options[:encoding] = 'UTF-8'
+
+          response = if @http_debug
+                       @http.use(logging: { logger: @logger }).request(verb, path, options)
+                     else
+                       @http.request(verb, path, options)
+                     end
         rescue StandardError => e
           puts "Request #{request_info(verb, path)} produced an exception:"
           puts e
+          @logger.error(e.message)
+          @logger.error(e.class)
+          @logger.error(e.backtrace)
           recreate_client
         else
           return response.parse(:json) if response.status.success?
@@ -30,6 +46,7 @@ module ReportPortal
     private
 
     def create_client
+      @http_debug = ENV.fetch('REPORT_PORTAL_HTTP_DEBUG', 'false') == 'true'
       @http = HTTP.auth("Bearer #{Settings.instance.uuid}")
       @http = @http.persistent(origin) if use_persistent?
       add_insecure_ssl_options if Settings.instance.disable_ssl_verification

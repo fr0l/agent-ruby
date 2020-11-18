@@ -1,7 +1,7 @@
 module ReportPortal
   # Represents a test item
   class TestItem
-    attr_reader :launch_id, :unique_id, :name, :description, :type, :parameters, :tags, :status, :start_time
+    attr_reader :launch_id, :unique_id, :name, :description, :type, :parameters, :tags, :status, :start_time, :retry
     attr_accessor :id, :closed
 
     def initialize(options = {})
@@ -17,6 +17,7 @@ module ReportPortal
       @start_time = options[:start_time]
       @id = options[:id]
       @closed = options[:closed]
+      @retry = options[:retry]
     end
   end
 end
