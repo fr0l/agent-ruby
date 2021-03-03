@@ -1,4 +1,5 @@
 require_relative 'report'
+require_relative '../error_reporter'
 
 module ReportPortal
   module Cucumber
@@ -6,6 +7,7 @@ module ReportPortal
       # @api private
       def initialize(config)
         ENV['REPORT_PORTAL_USED'] = 'true'
+        @error_reporter           = ::ReportPortal::ErrorReporter.new
 
         setup_message_processing
 
@@ -66,16 +68,46 @@ module ReportPortal
       end
 
       def process_message(report_method_name, *method_args)
-        args = [report_method_name, *method_args, ReportPortal.now]
-        if use_same_thread_for_reporting?
-          report.public_send(*args)
-        else
-          @queue.push(args)
+        begin
+          args = [report_method_name, *method_args, ReportPortal.now]
+          if use_same_thread_for_reporting?
+            report.public_send(*args)
+          else
+            @queue.push(args)
+          end
+        rescue => e
+          @error_reporter.send_error(
+            {
+              error_marker:  report_method_name.to_s,
+              error_type:    "#{e.class}",
+              error_message: e.message,
+              backtrace:     stringify_bactrace(e.backtrace),
+            }
+          )
+          ::Shared::Logging::BadooLogger.log.error("Got exception trying to process event #{report_method_name.to_s}. Exception: #{e.class} #{e.message}\n#{e.backtrace}")
         end
       end
 
+      def stringify_bactrace(backtrace)
+        backtrace.take(15).map { |element| element.to_s.tr('\'', '').tr('`', '') }.join("\n")
+      end
+
       def use_same_thread_for_reporting?
-        ReportPortal::Settings.instance.formatter_modes.include?('use_same_thread_for_reporting')
+        begin
+          ReportPortal::Settings.instance.formatter_modes.include?('use_same_thread_for_reporting')
+        rescue => e
+          @error_reporter.send_error(
+            {
+              error_marker:  report_method_name.to_s,
+              error_type:    "#{e.class}",
+              error_message: e.message,
+              backtrace:     stringify_bactrace(e.backtrace),
+            }
+          )
+          ::Shared::Logging::BadooLogger.log.error("Got exception trying to check if use_same_thread_for_reporting. Exception: #{e.class} #{e.message}\n#{e.backtrace}")
+
+          true
+        end
       end
     end
   end

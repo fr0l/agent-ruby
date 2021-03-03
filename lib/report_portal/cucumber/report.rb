@@ -1,5 +1,6 @@
 require 'cucumber/formatter/io'
 require 'cucumber/formatter/hook_query_visitor'
+require 'cucumber/formatter/junit'
 require 'tree'
 require 'securerandom'
 require 'redis'
@@ -58,10 +59,13 @@ module ReportPortal
         feature = test_case.feature
         if report_hierarchy? && !same_feature_as_previous_test_case?(feature)
           end_feature(desired_time) unless @parent_item_node.is_root?
-          start_feature_with_parentage(feature, desired_time)
+          start_feature_with_parentage(feature, desired_time, test_case)
         end
 
-        name = "#{test_case.keyword}: #{test_case.name}"
+        name_builder = ::Cucumber::Formatter::NameBuilder.new(test_case)
+        name = name_builder.scenario_name
+        name += " (Example: #{name_builder.row_name})" unless name_builder.row_name.empty?
+
         description = test_case.location.to_s
         tags = test_case.tags.map(&:name)
         type = :STEP
@@ -302,7 +306,7 @@ module ReportPortal
       # rubocop: disable Metrics/BlockNesting
       # rubocop: disable Metrics/MethodLength
       # rubocop: Metrics/LineLength
-      def start_feature_with_parentage(feature, desired_time)
+      def start_feature_with_parentage(feature, desired_time, test_case)
         parent_node = @root_node
         child_node = nil
         path_components = feature.location.file.split(File::SEPARATOR).reject(&:empty?)
@@ -405,19 +409,19 @@ module ReportPortal
               end
 
             else # if not test folder
-              item = ReportPortal::TestItem.new(
-                name: name,
-                type: type,
-                id: nil,
-                start_time: time_to_send(desired_time),
-                description: description,
-                closed: false,
-                tags: tags
-              )
+            item = ReportPortal::TestItem.new(
+              name: name,
+              type: type,
+              id: nil,
+              start_time: time_to_send(desired_time),
+              description: description,
+              closed: false,
+              tags: tags
+            )
 
-              child_node = Tree::TreeNode.new(path_component, item)
-              parent_node << child_node
-              item.id = ReportPortal.start_item(child_node) # TODO: multithreading
+            child_node = Tree::TreeNode.new(path_component, item)
+            parent_node << child_node
+            item.id = ReportPortal.start_item(child_node) # TODO: multithreading
             end
           end
           parent_node = child_node
